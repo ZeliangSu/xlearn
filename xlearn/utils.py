@@ -52,6 +52,7 @@ import numpy as np
 from itertools import product
 import numbers
 from numpy.lib.stride_tricks import as_strided
+from keras.utils import Sequence
 
 __authors__ = "Xiaogang Yang"
 __copyright__ = "Copyright (c) 2018, Argonne National Laboratory"
@@ -405,3 +406,49 @@ def extract_3d(img, patch_size, step):
     return patches
 
 
+class MBGD_helper(Sequence):
+    def __init__(self, patch_size, stride, nb_conv,
+                 size_conv, total_nb_batch, MB_size,
+                 nb_epoch, nb_down, nb_gpu):
+        self.patch_shape = (patch_size, patch_size)
+        self.stride = stride
+        self.nb_conv = nb_conv
+        self.size_conv = size_conv
+        self.total_nb_batch = total_nb_batch
+        self.MB_size = MB_size
+        self.nb_epoch = nb_epoch
+        self.nb_down = nb_down
+        self.nb_gpu = nb_gpu
+
+
+    def __len__(self):
+        '''
+            Calculte number of batches per epochs
+        '''
+
+        return int(np.floor(len(self.total_nb_batch) / self.MB_size))
+
+    def __getitem__(self, idx):
+        # generate IDs
+        #
+        pass
+
+    def on_epoch_end(self):
+        self.idx = np.arange(len(self.batchIDs))
+        if self.shuffle == True:
+            np.random.shuffle(self.idx)
+        pass
+    def _grab_data(self, list_IDs_temp):
+        # Initialization
+        X = np.empty((self.batch_size, *self.dim))
+        y = np.empty((self.batch_size, *self.dim))
+
+        # load minibatches with data
+        for i, ID in np.ndenumerate(list_IDs_temp):
+            X[i, ] =
+            y[i, ] =
+
+
+
+        return X, y
+    pass
