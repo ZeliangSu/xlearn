@@ -53,6 +53,8 @@ from itertools import product
 import numbers
 from numpy.lib.stride_tricks import as_strided
 from keras.utils import Sequence
+from keras.preprocessing.image import ImageDataGenerator
+from PIL import Image
 
 __authors__ = "Xiaogang Yang"
 __copyright__ = "Copyright (c) 2018, Argonne National Laboratory"
@@ -452,3 +454,25 @@ class MBGD_helper(Sequence):
 
         return X, y
     pass
+
+class dataProcessing():
+    def __init__(self, list_address):
+        self.datagen = ImageDataGenerator(rotation_range=90,
+                                          width_shift_range=0.2,
+                                          height_shift_range=0.2,
+                                          rescale=1./255,
+                                          shear_range=0.2,
+                                          zoom_range=0.2,
+                                          horizontal_flip=True,
+                                          fill_mode='nearest')
+        self.address = list_address
+        self.patch_size = Image.open(self.address[0]).shape[0]
+        
+    def print_dim(self):
+        self.patch_size =
+        print('dimension of patch: ({}, {})'.format(self.patch_size, self.patch_size))
+
+    def process(self):
+        # open images
+        #
+        pass
