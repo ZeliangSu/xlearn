@@ -53,8 +53,14 @@ from itertools import product
 import numbers
 from numpy.lib.stride_tricks import as_strided
 from keras.utils import Sequence
+
 from keras.preprocessing.image import ImageDataGenerator
 from PIL import Image
+import psutil as ps
+import h5py
+from os import listdir
+from multiprocessing import Pool
+from keras import backend as K
 
 __authors__ = "Xiaogang Yang"
 __copyright__ = "Copyright (c) 2018, Argonne National Laboratory"
@@ -412,6 +418,14 @@ class MBGD_helper(Sequence):
     def __init__(self, patch_size, stride, nb_conv,
                  size_conv, total_nb_batch, MB_size,
                  nb_epoch, nb_down, nb_gpu):
+        self.augmentation = ImageDataGenerator(rotation_range=10,
+                                          width_shift_range=0.2,
+                                          height_shift_range=0.2,
+                                          rescale=1./255,
+                                          shear_range=0.2,
+                                          zoom_range=0.2,
+                                          horizontal_flip=True,
+                                          fill_mode='nearest')
         self.patch_shape = (patch_size, patch_size)
         self.stride = stride
         self.nb_conv = nb_conv
@@ -421,7 +435,7 @@ class MBGD_helper(Sequence):
         self.nb_epoch = nb_epoch
         self.nb_down = nb_down
         self.nb_gpu = nb_gpu
-
+        self.shuffle_IDs()
 
     def __len__(self):
         '''
@@ -435,7 +449,7 @@ class MBGD_helper(Sequence):
         #
         pass
 
-    def on_epoch_end(self):
+    def shuffle_IDs(self):
         self.idx = np.arange(len(self.batchIDs))
         if self.shuffle == True:
             np.random.shuffle(self.idx)
@@ -447,8 +461,9 @@ class MBGD_helper(Sequence):
 
         # load minibatches with data
         for i, ID in np.ndenumerate(list_IDs_temp):
-            X[i, ] =
-            y[i, ] =
+            # X[i, ] =
+            # y[i, ] =
+            break
 
 
 
@@ -456,23 +471,80 @@ class MBGD_helper(Sequence):
     pass
 
 class dataProcessing():
-    def __init__(self, list_address):
-        self.datagen = ImageDataGenerator(rotation_range=90,
-                                          width_shift_range=0.2,
-                                          height_shift_range=0.2,
-                                          rescale=1./255,
-                                          shear_range=0.2,
-                                          zoom_range=0.2,
-                                          horizontal_flip=True,
-                                          fill_mode='nearest')
-        self.address = list_address
-        self.patch_size = Image.open(self.address[0]).shape[0]
-        
-    def print_dim(self):
-        self.patch_size =
-        print('dimension of patch: ({}, {})'.format(self.patch_size, self.patch_size))
+    def __init__(self, parentDir, outpath, patch_size, patch_step, RAM_limit = None):
+        self.list_address = listdir(parentDir)
+        self.img_size = np.asarray(Image.open(parentDir + '/' + self.list_address[0])).shape[0] #assume anisotropy of img properties
+        self.img_shape = (self.img_size, self.img_size)
+        self.patch_size = patch_size
+        self.patch_shape = (self.patch_size, self.patch_size)
+        self.patch_step = patch_step
+        if RAM_limit == None:
+            self.RAM_limit = int(ps.virtual_memory()[1] * 0.4) >> 20 # usually 25000 MB, half output half input
+        self.patchPerImg, self.width, self.maxPatchPerFile, self.maxImgPerFile, self.maxPatchPerFile, self.nb_file = self.get_stack_info()
+        self.IDs = self.IDgen()  #np array
+        self.process(outpath)
 
-    def process(self):
-        # open images
-        #
+    def get_mdl_mem_size(self, batch_size, model):
+        shapes_mem_count = 0
+        for l in model.layers:
+            single_layer_mem = 1
+            for s in l.output_shape:
+                if s is None:
+                    continue
+                single_layer_mem *= s
+            shapes_mem_count += single_layer_mem
+
+        trainable_count = np.sum([K.count_params(p) for p in set(model.trainable_weights)])
+        non_trainable_count = np.sum([K.count_params(p) for p in set(model.non_trainable_weights)])
+
+        number_size = 4.0
+        if K.floatx() == 'float16':
+            number_size = 2.0
+        if K.floatx() == 'float64':
+            number_size = 8.0
+
+        total_memory = number_size * (batch_size * shapes_mem_count + trainable_count + non_trainable_count)
+        Mbytes = total_memory / (1024.0 ** 2)
+        return Mbytes
+
+    def get_stack_info(self):
+        ######## must keep dimensions of img identical ########
+        patch_Mbytes = (4 * self.patch_size ** 2 / (10 ** 6))
+        width = (self.img_size - self.patch_size) // self.patch_step + 1
+        patchPerImg = pow(width, 2)
+        maxPatchPerFile = self.RAM_limit // patch_Mbytes  # 4 bytes = 32 bits, unit: bytes
+        nb_file = len(self.list_address) // (maxPatchPerFile // patchPerImg)
+        print('dimension of this patch group: ({}, {})\n'.format(self.patch_size, self.patch_size))
+        print('{} patches per .h5 and {} .h5 files are generated '.format(maxPatchPerFile, nb_file))
+        return patchPerImg, width, maxPatchPerFile, maxPatchPerFile // patchPerImg, maxPatchPerFile, nb_file
+
+    def nor_data(self):
+        # convert to value of 0 to 1
         pass
+
+    def IDgen(self):
+        tot_nb_IDs = self.maxPatchPerFile * self.nb_file
+        IDs = np.linspace(0, tot_nb_IDs, tot_nb_IDs)
+        return IDs #np array
+
+    def readimg(self, path):
+        #TODO: for multiprocessing .map
+        return np.asarray(Image.open(path))
+
+    def process(self, outpath):
+        # loop diff h5 files
+        for i in range(self.nb_file):
+            # open images
+            stack = np.empty((self.maxImgPerFile, *self.img_shape))
+            for j in range(self.maxImgPerFile):
+                stack[j,] = self.readimg(self.list_address[i * self.maxImgPerFile + j]) #TODO: parallel
+            strides = stack.strides + stack.strides
+
+            # extract patches
+            for j in range(self.patchPerImg):
+                patches = np.vstack(as_strided(stack, shape=(self.width, self.width, *self.patch_shape), strides=strides))
+
+            # save .h5 file
+            with h5py.File(outpath, 'w') as h5:
+                h5.create_dataset('patches.h5', data=patches)
+

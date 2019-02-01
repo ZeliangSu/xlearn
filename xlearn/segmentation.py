@@ -197,7 +197,6 @@ def seg_predict(img, wpath, spath, patch_size = 32, patch_step = 1,
     patch_shape = (patch_size, patch_size)
     img = np.float32(nor_data(img))
     mdl = model_choose(patch_size, patch_size, nb_conv, size_conv, nb_down, nb_gpu)
-    # print(mdl.summary())
     mdl.load_weights(wpath)
     if img.ndim == 2:
         ih, iw = img.shape
@@ -227,48 +226,23 @@ def seg_predict(img, wpath, spath, patch_size = 32, patch_step = 1,
 
 def MBGD_seg_train(address2X, address2y, patch_size=32,
                 patch_step=1, nb_conv=32, size_conv = 3,
-                nb_patch_per_MB = 100, nb_epoch=20, nb_down=2, nb_gpu=1):
+                miniBatch_size= 100, nb_epoch=20, nb_down=2, nb_gpu=1):
     '''Mini Batch Grandient Descend without loading whole training set'''
-
-    # calculate some params
-    RAM_available = psutil.virtual_memory()[1] >> 20  # unit: MB
-    one_Ximg = Image.open(address2X)
-    one_yimg = Image.open(address2y)
-    totalXSize = one_Ximg.shape[0] * one_Ximg.shape[0] * len(address2X)
-    totalySize = one_yimg.shape[0] * one_yimg.shape[0] * len(address2y)
-
-    if totalXSize != totalySize:
-        print('Please check dimensions of images for i/o of train folder!')
-
-    # generate a list of batch IDs
-    total_nb_patch = (one_Ximg[0] - patch_size) / patch_step *\
-                     (one_Ximg[1] - patch_size) / patch_step *\
-                     len(address2X)
-
-
-    list_MBbatchIDs = np.linspace(1, total_nb_patch, total_nb_patch)
-
-    # cal minibatch size
-    mem_per_patch = 4 ** patch_size ** 2 >> 20  # 4 bytes = 32 bits, unit: bytes
-    MB_size = ceil(RAM_available * 0.8 / (mem_per_patch * nb_patch_per_MB))  #authorize 80% RAM charge
 
     #
     params = {'patch_size': patch_size,
               'stride': patch_step,
               'nb_conv': nb_conv,
               'size_conv': size_conv,
-              'total_nb_batch': total_nb_patch,
-              'MB_size': MB_size,
+              'batch_size': miniBatch_size,
               'nb_epoch': nb_epoch,
               'nb_down': nb_down,
               'nb_gpu': nb_gpu,
               'shuffle': True}
 
-    # datagen: image augmentation
-
     # withdraw data
-    train_gen = MBGD_helper(**params)
-    valid_gen = MBGD_helper(**params)
+    train_gen = MBGD_helper(address2X, **params)
+    valid_gen = MBGD_helper(address2y, **params)
 
     # init Net
     mdl = model_choose(patch_size, patch_size, nb_conv, size_conv, nb_down, nb_gpu)
@@ -282,4 +256,3 @@ def MBGD_seg_train(address2X, address2y, patch_size=32,
                       max_queue_size=4, #for not saturating too much
                       use_multiprocessing=True,
                       workers=nb_cores)
-    pass

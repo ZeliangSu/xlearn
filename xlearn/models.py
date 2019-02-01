@@ -57,6 +57,7 @@ from tensorflow.python.keras.layers import Dense, Reshape, Flatten, \
     Dropout, Input, concatenate, Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose, Activation
 from tensorflow.python.keras.utils import multi_gpu_model
 
+
 # from keras.models import Sequential, Model
 # from keras.layers import Dense, Reshape, Flatten, \
 #     Dropout, Input, concatenate, Conv2D, MaxPooling2D, UpSampling2D, Conv2DTranspose, Activation
@@ -467,7 +468,7 @@ def transformer3_filter(ih, iw, nb_conv, size_conv):
     conv8 = Conv2DTranspose(1, (3, 3), activation='relu', padding='same')(conv8)
 
     mdl = Model(inputs=inputs, outputs=conv8)
-    mdl.compile(loss= 'mse', optimizer='Adam', metrics=['accuracy'])
+    mdl.compile(loss='mse', optimizer='Adam', metrics=['accuracy'])
     return mdl
 
 def psnr(y_true, y_pred):
