@@ -57,8 +57,6 @@ from keras.utils import Sequence
 from keras.preprocessing.image import ImageDataGenerator
 from PIL import Image
 import os
-from tensorflow import extract_image_patches
-from multiprocessing import Pool
 from keras import backend as K
 import h5py
 
@@ -415,60 +413,50 @@ def extract_3d(img, patch_size, step):
 
 
 class MBGD_helper(Sequence):
-    def __init__(self, patch_size, stride, nb_conv,
-                 size_conv, total_nb_batch, MB_size,
-                 nb_epoch, nb_down, nb_gpu):
-        self.augmentation = ImageDataGenerator(rotation_range=10,
-                                          width_shift_range=0.2,
-                                          height_shift_range=0.2,
-                                          rescale=1./255,
-                                          shear_range=0.2,
-                                          zoom_range=0.2,
-                                          horizontal_flip=True,
-                                          fill_mode='nearest')
+    def __init__(self, inpath, patch_size, stride,
+                 total_nb_batch, MB_size,
+                 shuffle):
+        self.inpath = inpath
         self.patch_shape = (patch_size, patch_size)
+        self.shuffle = shuffle
         self.stride = stride
-        self.nb_conv = nb_conv
-        self.size_conv = size_conv
         self.total_nb_batch = total_nb_batch
+        self.idx = np.arange(self.total_nb_batch)
         self.MB_size = MB_size
-        self.nb_epoch = nb_epoch
-        self.nb_down = nb_down
-        self.nb_gpu = nb_gpu
         self.shuffle_IDs()
 
     def __len__(self):
         '''
             Calculte number of batches per epochs
         '''
-
-        return int(np.floor(len(self.total_nb_batch) / self.MB_size))
+        return int(self.total_nb_batch)
 
     def __getitem__(self, idx):
-        # generate IDs
-        #
-        pass
+        # grab data
+        X, y = self._grab_data(idx)
+        print(idx)
+        return X, y
 
     def shuffle_IDs(self):
-        self.idx = np.arange(len(self.batchIDs))
         if self.shuffle == True:
             np.random.shuffle(self.idx)
-        pass
-    def _grab_data(self, list_IDs_temp):
+
+    def _withdrawBatch(self, ID):
+        with h5py.File(self.inpath, 'r') as f:
+            dset = f['patches']
+
+        return dset[ID * self.MB_size: (ID + 1) * self.MB_size, ...]
+
+    def _grab_data(self, ID):
         # Initialization
-        X = np.empty((self.batch_size, *self.dim))
-        y = np.empty((self.batch_size, *self.dim))
+        X = np.empty((self.MB_size, *self.patch_shape))
+        y = np.empty((self.MB_size, *self.patch_shape))
 
         # load minibatches with data
-        for i, ID in np.ndenumerate(list_IDs_temp):
-            # X[i, ] =
-            # y[i, ] =
-            break
-
-
+        X[:self.MB_size, ], y[:self.MB_size, ] = self._withdrawBatch(ID)
 
         return X, y
-    pass
+
 
 class dataProcessing():
     def __init__(self, parentDir, outpath, patch_size, patch_step, batch_size):
@@ -539,6 +527,39 @@ class dataProcessing():
         # return np.expand_dims(np.expand_dims(np.asarray(Image.open(path)), axis=0), axis=3)  # convert to (1, h, w, 1)
         return np.asarray(Image.open(path))
 
+    def rawImgAugmentation(self):
+        '''augmentation directly on image'''
+        #fixme: not stable generate weird borders
+        raw_stack = np.empty((len(self.raw_addresses), *self.img_shape, 1))
+        label_stack = np.empty((len(self.label_addresses), *self.img_shape, 1))
+
+        for i in range(len(self.raw_addresses)):
+            raw_stack[i, :, :, 0] = self.readimg(self.raw_addresses[i])
+            label_stack[i, :, :, 0] = self.readimg(self.label_addresses[i])
+        datagen = ImageDataGenerator(rotation_range=90,
+                                     width_shift_range=0.2,
+                                     height_shift_range=0.2,
+                                     rescale=0.9,
+                                     shear_range=0.2,
+                                     zoom_range=0.2,
+                                     horizontal_flip=True,
+                                     vertical_flip=True,
+                                     )
+        datagen.fit(raw_stack)
+        i = 0
+        for aug_raw_stack, aug_label_stack in datagen.flow(raw_stack, label_stack, batch_size=len(self.raw_addresses),
+                                                   shuffle=True):
+            i += 1
+            if i >= len(self.raw_addresses):
+                break
+
+        # save augmented imgs
+        # fixme: try to save the label images
+        for i in range(raw_stack.shape[0]):
+            Image.fromarray(raw_stack[i, ]).save('aug_{}.tif'.format(i))
+            Image.fromarray(label_stack[i, ]).save('aug_{}_label.tif'.format(i))
+        pass
+
     def process(self, outpath):
         for i in range(len(self.raw_addresses)):
             # TODO: parallel
@@ -546,16 +567,11 @@ class dataProcessing():
             raw = self.readimg(self.raw_addresses[i])
             label = self.readimg(self.label_addresses[i])
 
-            # extract patches
-            # (id, h, w, color_chan)
-            # patches = np.rollaxis(extract_image_patches(img, ksizes=(1, self.patch_size, self.patch_size, 1),
-            #                                 strides=(1, self.patch_step, self.patch_step, 1),
-                                            # rates=(1, 1, 1, 1), padding='VALID'), 3, 0)
             strides = tuple([i * self.patch_step for i in raw.strides]) + tuple([i * self.patch_step for i in raw.strides])
             raw_patches = as_strided(raw, shape=(self.p_h, self.p_w, *self.patch_shape), strides=strides).reshape(-1, *self.patch_shape)
             label_patches = as_strided(label, shape=(self.p_h, self.p_w, *self.patch_shape), strides=strides).reshape(-1, *self.patch_shape)
 
-            # append .csv file
+            # append .h5 file
             with h5py.File(outpath, 'w') as f:
                 X_train = f.create_dataset('raw_patches', (self.patchPerImg, *self.patch_shape),
                                         maxshape=(None, *self.patch_shape),
@@ -566,6 +582,7 @@ class dataProcessing():
                                            maxshape=(None, *self.patch_shape),
                                            dtype='float32')
                 y_train[:] = label_patches
+                f.create_dataset('shape', data=(self.tot_nb_IDs, *self.patch_shape), dtype='int')
 
 
     def reconstruct(self, outdir):

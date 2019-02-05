@@ -399,6 +399,7 @@ def transformer3_direct(ih, iw, nb_conv, size_conv):
     conv8 = Conv2DTranspose(1, (3, 3), activation='relu', padding='same')(conv7)
 
     mdl = Model(inputs=inputs, outputs=conv8)
+    print(mdl.summary())
     mdl.compile(loss=psnr, optimizer='Adam', metrics=['mse'])
     return mdl
 
@@ -468,6 +469,7 @@ def transformer3_filter(ih, iw, nb_conv, size_conv):
     conv8 = Conv2DTranspose(1, (3, 3), activation='relu', padding='same')(conv8)
 
     mdl = Model(inputs=inputs, outputs=conv8)
+    print(mdl.summary())
     mdl.compile(loss='mse', optimizer='Adam', metrics=['accuracy'])
     return mdl
 

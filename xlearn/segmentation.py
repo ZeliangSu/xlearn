@@ -54,9 +54,7 @@ import dxchange
 from xlearn.utils import nor_data, extract_3d, reconstruct_patches, MBGD_helper
 from xlearn.models import transformer2, transformer3_pooling
 
-import psutil
-from math import ceil, floor
-from PIL import Image
+import multiprocessing as mp
 
 __authors__ = "Xiaogang Yang, Francesco De Carlo"
 __copyright__ = "Copyright (c) 2018, Argonne National Laboratory"
@@ -224,35 +222,36 @@ def seg_predict(img, wpath, spath, patch_size = 32, patch_step = 1,
             print('The prediction runs for %s seconds' % (time.time() - tstart))
 
 
-def MBGD_seg_train(address2X, address2y, patch_size=32,
+def MBGD_seg_train(address, patch_size=32,
                 patch_step=1, nb_conv=32, size_conv = 3,
                 miniBatch_size= 100, nb_epoch=20, nb_down=2, nb_gpu=1):
     '''Mini Batch Grandient Descend without loading whole training set'''
 
     #
-    params = {'patch_size': patch_size,
-              'stride': patch_step,
-              'nb_conv': nb_conv,
-              'size_conv': size_conv,
-              'batch_size': miniBatch_size,
-              'nb_epoch': nb_epoch,
-              'nb_down': nb_down,
-              'nb_gpu': nb_gpu,
-              'shuffle': True}
+    params = {
+        'address' : address,
+        'patch_size': patch_size,
+        'stride': patch_step,
+        'nb_conv': nb_conv,
+        'size_conv': size_conv,
+        'batch_size': miniBatch_size,
+        'nb_epoch': nb_epoch,
+        'nb_down': nb_down,
+        'nb_gpu': nb_gpu,
+        'shuffle': True
+    }
+
 
     # withdraw data
-    train_gen = MBGD_helper(address2X, **params)
-    valid_gen = MBGD_helper(address2y, **params)
+    train_gen = MBGD_helper(address, **params)
 
     # init Net
     mdl = model_choose(patch_size, patch_size, nb_conv, size_conv, nb_down, nb_gpu)
-    print(mdl.summary())
-    mdl.compile()
 
     # train model
-    nb_cores = psutil.cpu_count()
+    nb_cores = mp.cpu_count()
     mdl.fit_generator(generator=train_gen,
-                      validation_data=valid_gen,
+                      # validation_data=valid_gen,
                       max_queue_size=4, #for not saturating too much
                       use_multiprocessing=True,
                       workers=nb_cores)
