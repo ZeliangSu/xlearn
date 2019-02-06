@@ -454,7 +454,6 @@ class MBGD_helper(Sequence):
 
         # load minibatches with data
         X[:self.MB_size, ], y[:self.MB_size, ] = self._withdrawBatch(ID)
-
         return X, y
 
 
@@ -567,9 +566,10 @@ class dataProcessing():
             raw = self.readimg(self.raw_addresses[i])
             label = self.readimg(self.label_addresses[i])
 
-            strides = tuple([i * self.patch_step for i in raw.strides]) + tuple([i * self.patch_step for i in raw.strides])
-            raw_patches = as_strided(raw, shape=(self.p_h, self.p_w, *self.patch_shape), strides=strides).reshape(-1, *self.patch_shape)
-            label_patches = as_strided(label, shape=(self.p_h, self.p_w, *self.patch_shape), strides=strides).reshape(-1, *self.patch_shape)
+            raw_strides = tuple([i * self.patch_step for i in raw.strides]) + tuple(raw.strides) # (4bytes * step * dim0, 4bytes * step, 4bytes * dim0, 4bytes)
+            label_strides = tuple([i * self.patch_step for i in label.strides]) + tuple(label.strides)
+            raw_patches = as_strided(raw, shape=(self.p_h, self.p_w, *self.patch_shape), strides=raw_strides).reshape(-1, *self.patch_shape)
+            label_patches = as_strided(label, shape=(self.p_h, self.p_w, *self.patch_shape), strides=label_strides).reshape(-1, *self.patch_shape)
 
             # append .h5 file
             with h5py.File(outpath, 'w') as f:
@@ -580,7 +580,7 @@ class dataProcessing():
                 X_train[:] = raw_patches
                 y_train = f.create_dataset('label_patches', (self.patchPerImg, *self.patch_shape),
                                            maxshape=(None, *self.patch_shape),
-                                           dtype='float32')
+                                           dtype='int8')
                 y_train[:] = label_patches
                 f.create_dataset('shape', data=(self.tot_nb_IDs, *self.patch_shape), dtype='int')
 

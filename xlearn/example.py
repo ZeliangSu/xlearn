@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from utils import dataProcessing, MBGD_helper
-from segmentation import model_choose
+from xlearn.utils import dataProcessing, MBGD_helper
+from xlearn.segmentation import model_choose
 import multiprocessing as mp
 import h5py
 
 
 patch_size = 32
 patch_step = 5
-batch_size = 1000
+batch_size = 100
 h5path = '../test/process/{}.h5'.format(patch_size)
 
 nb_conv = 32
@@ -27,14 +27,14 @@ process_params = {
     'batch_size': batch_size,
 }
 
-# dataProcessing(**process_params)
+dataProcessing(**process_params)
 
 # init Net
 mdl = model_choose(patch_size, patch_size, nb_conv, size_conv, nb_down, nb_gpu)
-
-
-
-
+#
+#
+#
+#
 with h5py.File(h5path, 'r') as f:
     tmp = f['shape']
     total_nb_batch = tmp[:][0]
@@ -52,11 +52,11 @@ train_gen = MBGD_helper(**helper_params)
 
 nb_cores = 1  #mp.cpu_count()
 mdl.fit_generator(generator=train_gen,
-                  # verbose=2,
+                  verbose=2,
                   # epochs=nb_epoch,
                   # validation_data=train_gen,
                   steps_per_epoch=train_gen.__len__(),
                   max_queue_size=4,
-                  use_multiprocessing=True,
-                  workers=nb_cores
+                  use_multiprocessing=False,
+                  # workers=nb_cores
                   )
