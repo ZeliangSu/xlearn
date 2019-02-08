@@ -59,6 +59,7 @@ from PIL import Image
 import os
 from keras import backend as K
 import h5py
+import pandas as pd
 
 __authors__ = "Xiaogang Yang"
 __copyright__ = "Copyright (c) 2018, Argonne National Laboratory"
@@ -411,55 +412,15 @@ def extract_3d(img, patch_size, step):
             patches = np.concatenate((patches, patches_tmp), axis=0)
     return patches
 
-
-class MBGD_helper(Sequence):
-    def __init__(self, inpath, patch_size, stride,
-                 total_nb_batch, MB_size,
-                 shuffle):
-        self.inpath = inpath
-        self.patch_shape = (patch_size, patch_size)
-        self.shuffle = shuffle
-        self.stride = stride
-        self.total_nb_batch = total_nb_batch
-        self.idx = np.arange(self.total_nb_batch)
-        self.MB_size = MB_size
-        self.shuffle_IDs()
-
-    def __len__(self):
-        '''
-            Calculte number of batches per epochs
-        '''
-        return int(self.total_nb_batch)
-
-    def __getitem__(self, idx):
-        # grab data
-        X, y = self._grab_data(idx)
-        print(idx)
-        return X, y
-
-    def shuffle_IDs(self):
-        if self.shuffle == True:
-            np.random.shuffle(self.idx)
-
-    def _withdrawBatch(self, ID):
-        with h5py.File(self.inpath, 'r') as f:
-            dset = f['patches']
-
-        return dset[ID * self.MB_size: (ID + 1) * self.MB_size, ...]
-
-    def _grab_data(self, ID):
-        # Initialization
-        X = np.empty((self.MB_size, *self.patch_shape))
-        y = np.empty((self.MB_size, *self.patch_shape))
-
-        # load minibatches with data
-        X[:self.MB_size, ], y[:self.MB_size, ] = self._withdrawBatch(ID)
-        return X, y
-
+def MBGD_extractor(path, batch_size):
+    with h5py.File(path, 'r') as f:
+        for i in range(f['shape'][0] // batch_size):
+            yield (np.expand_dims(f['raw_patches'][i * batch_size: (i + 1) * batch_size, ], axis=3),
+                   np.expand_dims(f['label_patches'][i * batch_size: (i + 1) * batch_size, ], axis=3))
 
 class dataProcessing():
     def __init__(self, parentDir, outpath, patch_size, patch_step, batch_size):
-        '''output file name should be {patch_size}.h5'''
+        '''output file name should be {patch_size}.h5/.csv/dir'''
         self.raw_addresses = []
         self.label_addresses = []
         for dirpath, _, fnames in os.walk(parentDir):
@@ -468,7 +429,7 @@ class dataProcessing():
                     self.raw_addresses.append(os.path.abspath(os.path.join(dirpath, fname)))
                 else:
                     self.label_addresses.append(os.path.abspath(os.path.join(dirpath, fname)))
-
+        self.outpath = outpath
         self.batch_size = batch_size
         self.i_h = np.asarray(Image.open(self.raw_addresses[0])).shape[0]
         self.i_w = np.asarray(Image.open(self.raw_addresses[0])).shape[1]
@@ -477,8 +438,51 @@ class dataProcessing():
         self.patch_shape = (self.patch_size, self.patch_size)
         self.patch_step = patch_step
         self.patchPerImg, self.p_h, self.p_w = self.get_stack_info()
-        self.IDs = self.IDgen()  #np array
-        self.process(outpath)
+
+    def process(self, ftype='h5'):
+        for i in range(len(self.raw_addresses)):
+            # TODO: parallel
+            # open images
+            raw = self._readimg(self.raw_addresses[i])
+            label = self._readimg(self.label_addresses[i])
+
+            raw_strides = tuple([i * self.patch_step for i in raw.strides]) + tuple(raw.strides) # (4bytes * step * dim0, 4bytes * step, 4bytes * dim0, 4bytes)
+            label_strides = tuple([i * self.patch_step for i in label.strides]) + tuple(label.strides)
+            raw_patches = as_strided(raw, shape=(self.p_h, self.p_w, *self.patch_shape), strides=raw_strides).reshape(-1, *self.patch_shape)
+            label_patches = as_strided(label, shape=(self.p_h, self.p_w, *self.patch_shape), strides=label_strides).reshape(-1, *self.patch_shape)
+
+            # append .h5/.csv/dir file
+            if ftype == 'h5':
+                with h5py.File(self.outpath + '.h5', 'w') as f:
+                    X_train = f.create_dataset('raw_patches', (self.patchPerImg, *self.patch_shape),
+                                            maxshape=(None, *self.patch_shape),
+                                            dtype='float32')
+
+                    X_train[:] = raw_patches
+                    y_train = f.create_dataset('label_patches', (self.patchPerImg, *self.patch_shape),
+                                               maxshape=(None, *self.patch_shape),
+                                               dtype='int8')
+                    y_train[:] = label_patches
+                    f.create_dataset('shape', data=(self.tot_nb_IDs, *self.patch_shape), dtype='int')
+
+            elif ftype == 'csv':
+                tmp = {
+                    raw: raw_patches,
+                    label: label_patches
+                }
+                pd.DataFrame(tmp, columns=['raw', 'label']).to_csv(self.outpath + '.csv')
+
+            elif ftype == 'folder':
+                #TODO: parallel
+                if not os.path.exists('../test/process/train'):
+                    os.mkdir('../test/process/train')
+                for j in range(raw_patches.shape[0]):
+                    pd.DataFrame(raw_patches[j, ]).to_csv('../test/process/train/{}.csv'.format(i * self.patchPerImg + j))
+                    pd.DataFrame(label_patches[j, ]).to_csv('../test/process/train/{}_label.csv'.format(i * self.patchPerImg + j))
+
+    def _readimg(self, path):
+        # return np.expand_dims(np.expand_dims(np.asarray(Image.open(path)), axis=0), axis=3)  # convert to (1, h, w, 1)
+        return np.asarray(Image.open(path))
 
     def get_mdl_mem_size(self, batch_size, model):
         '''Whole memory size in Mbytes of patches and parameters excluding the one for calculating gradient descent'''
@@ -521,11 +525,6 @@ class dataProcessing():
         IDs = np.linspace(0, self.tot_nb_IDs, self.tot_nb_IDs)
         return IDs #np array
 
-    def readimg(self, path):
-        #TODO: for multiprocessing .map
-        # return np.expand_dims(np.expand_dims(np.asarray(Image.open(path)), axis=0), axis=3)  # convert to (1, h, w, 1)
-        return np.asarray(Image.open(path))
-
     def rawImgAugmentation(self):
         '''augmentation directly on image'''
         #fixme: not stable generate weird borders
@@ -533,8 +532,8 @@ class dataProcessing():
         label_stack = np.empty((len(self.label_addresses), *self.img_shape, 1))
 
         for i in range(len(self.raw_addresses)):
-            raw_stack[i, :, :, 0] = self.readimg(self.raw_addresses[i])
-            label_stack[i, :, :, 0] = self.readimg(self.label_addresses[i])
+            raw_stack[i, :, :, 0] = self._readimg(self.raw_addresses[i])
+            label_stack[i, :, :, 0] = self._readimg(self.label_addresses[i])
         datagen = ImageDataGenerator(rotation_range=90,
                                      width_shift_range=0.2,
                                      height_shift_range=0.2,
@@ -553,40 +552,10 @@ class dataProcessing():
                 break
 
         # save augmented imgs
-        # fixme: try to save the label images
         for i in range(raw_stack.shape[0]):
             Image.fromarray(raw_stack[i, ]).save('aug_{}.tif'.format(i))
             Image.fromarray(label_stack[i, ]).save('aug_{}_label.tif'.format(i))
         pass
 
-    def process(self, outpath):
-        for i in range(len(self.raw_addresses)):
-            # TODO: parallel
-            # open images
-            raw = self.readimg(self.raw_addresses[i])
-            label = self.readimg(self.label_addresses[i])
-
-            raw_strides = tuple([i * self.patch_step for i in raw.strides]) + tuple(raw.strides) # (4bytes * step * dim0, 4bytes * step, 4bytes * dim0, 4bytes)
-            label_strides = tuple([i * self.patch_step for i in label.strides]) + tuple(label.strides)
-            raw_patches = as_strided(raw, shape=(self.p_h, self.p_w, *self.patch_shape), strides=raw_strides).reshape(-1, *self.patch_shape)
-            label_patches = as_strided(label, shape=(self.p_h, self.p_w, *self.patch_shape), strides=label_strides).reshape(-1, *self.patch_shape)
-
-            # append .h5 file
-            with h5py.File(outpath, 'w') as f:
-                X_train = f.create_dataset('raw_patches', (self.patchPerImg, *self.patch_shape),
-                                        maxshape=(None, *self.patch_shape),
-                                        dtype='float32')
-
-                X_train[:] = raw_patches
-                y_train = f.create_dataset('label_patches', (self.patchPerImg, *self.patch_shape),
-                                           maxshape=(None, *self.patch_shape),
-                                           dtype='int8')
-                y_train[:] = label_patches
-                f.create_dataset('shape', data=(self.tot_nb_IDs, *self.patch_shape), dtype='int')
-
-
-    def reconstruct(self, outdir):
-        '''reconstruct img from patches'''
-        pass
 
 
