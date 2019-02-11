@@ -16,7 +16,7 @@ nb_conv = 32
 size_conv = 3
 nb_down = 3
 nb_gpu = 0
-nb_epoch = 20
+nb_epoch = 5
 
 
 process_params = {
@@ -45,7 +45,7 @@ helper_params = {
     'shuffle': True,
 }
 
-train_gen = MBGD_extractor(h5path + '.h5', batch_size)
+train_gen = MBGD_extractor(h5path + '.h5')
 
 nb_cores = mp.cpu_count()
 mdl.fit_generator(generator=train_gen,
@@ -53,7 +53,9 @@ mdl.fit_generator(generator=train_gen,
                   epochs=nb_epoch,
                   # validation_data=train_gen,
                   steps_per_epoch=total_nb_batch,
-                  max_queue_size=10,
+                  max_queue_size=nb_cores,
                   use_multiprocessing=True,
                   workers=nb_cores
                   )
+
+mdl.save_weights('../../tmp/test.h5')

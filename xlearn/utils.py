@@ -412,11 +412,12 @@ def extract_3d(img, patch_size, step):
             patches = np.concatenate((patches, patches_tmp), axis=0)
     return patches
 
-def MBGD_extractor(path, batch_size):
+def MBGD_extractor(path):
     with h5py.File(path, 'r') as f:
-        for i in range(f['shape'][0] // batch_size):
-            yield (np.expand_dims(f['raw_patches'][i * batch_size: (i + 1) * batch_size, ], axis=3),
-                   np.expand_dims(f['label_patches'][i * batch_size: (i + 1) * batch_size, ], axis=3))
+        for i in range(f['shape'][0]):
+            yield (np.expand_dims(np.expand_dims(f['raw_patches'][i, ], axis=3), axis=0),
+                   np.expand_dims(np.expand_dims(f['label_patches'][i, ], axis=3), axis=0))
+
 
 class dataProcessing():
     def __init__(self, parentDir, outpath, patch_size, patch_step, batch_size):
@@ -438,9 +439,11 @@ class dataProcessing():
         self.patch_shape = (self.patch_size, self.patch_size)
         self.patch_step = patch_step
         self.patchPerImg, self.p_h, self.p_w = self.get_stack_info()
+        self.IDs, self.tot_nb_IDs = self.IDgen()
 
     def process(self, ftype='h5'):
         for i in range(len(self.raw_addresses)):
+            # append patches of image per image
             # TODO: parallel
             # open images
             raw = self._readimg(self.raw_addresses[i])
@@ -453,17 +456,27 @@ class dataProcessing():
 
             # append .h5/.csv/dir file
             if ftype == 'h5':
-                with h5py.File(self.outpath + '.h5', 'w') as f:
-                    X_train = f.create_dataset('raw_patches', (self.patchPerImg, *self.patch_shape),
-                                            maxshape=(None, *self.patch_shape),
-                                            dtype='float32')
+                if os.path.exists(self.outpath + '.h5'):
+                    with h5py.File(self.outpath + '.h5', 'a') as f:
+                        f['raw_patches'].resize(f['raw_patches'].shape[0] + self.patchPerImg, axis=0)
+                        f['label_patches'].resize(f['label_patches'].shape[0] + self.patchPerImg, axis=0)
+                        f['raw_patches'][-self.patchPerImg:, ] = raw_patches
+                        f['label_patches'][-self.patchPerImg:, ] = label_patches
+                        f['shape'][:] = f['raw_patches'].shape[0]
 
-                    X_train[:] = raw_patches
-                    y_train = f.create_dataset('label_patches', (self.patchPerImg, *self.patch_shape),
-                                               maxshape=(None, *self.patch_shape),
-                                               dtype='int8')
-                    y_train[:] = label_patches
-                    f.create_dataset('shape', data=(self.tot_nb_IDs, *self.patch_shape), dtype='int')
+                else:
+                    with h5py.File(self.outpath + '.h5', 'w') as f:
+                        X_train = f.create_dataset('raw_patches', (self.patchPerImg, *self.patch_shape),
+                                                maxshape=(None, *self.patch_shape),
+                                                dtype='float32')
+
+                        X_train[:] = raw_patches
+                        y_train = f.create_dataset('label_patches', (self.patchPerImg, *self.patch_shape),
+                                                   maxshape=(None, *self.patch_shape),
+                                                   dtype='int8')
+                        y_train[:] = label_patches
+                        f.create_dataset('shape', data=f['raw_patches'].shape, dtype='int')
+
 
             elif ftype == 'csv':
                 tmp = {
@@ -521,9 +534,9 @@ class dataProcessing():
         return patchPerImg, p_h, p_w
 
     def IDgen(self):
-        self.tot_nb_IDs = self.patchPerImg * len(self.raw_addresses)
-        IDs = np.linspace(0, self.tot_nb_IDs, self.tot_nb_IDs)
-        return IDs #np array
+        tot_nb_IDs = self.patchPerImg * len(self.raw_addresses)
+        IDs = np.linspace(0, tot_nb_IDs, tot_nb_IDs)
+        return IDs, tot_nb_IDs
 
     def rawImgAugmentation(self):
         '''augmentation directly on image'''
